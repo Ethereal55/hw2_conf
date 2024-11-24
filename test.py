@@ -1,57 +1,77 @@
 import unittest
-from unittest.mock import patch, MagicMock
-import subprocess
-from graphviz import Digraph
-from io import StringIO
-import hw2_git  # Предполагаем, что ваш код сохранен в hw2_git.py
+import os
+from hw2_git import read_git_object, parse_commit_object, get_commit_dependencies, build_graph
 
-class TestGitVisualizer(unittest.TestCase):
+class TestGitDependencyVisualizer(unittest.TestCase):
 
-    @patch("subprocess.run")
-    def test_get_commit_dependencies_success(self, mock_run):
-        # Мокируем вывод команды git
-        mock_run.return_value = MagicMock(stdout="commit1 parent1\ncommit2 parent1 parent2", stderr="", returncode=0)
-        
-        # Проверяем, что функция возвращает правильные зависимости
-        repo_path = "/fake/repo"
-        branch_name = "main"
-        result = hw2_git.get_commit_dependencies(repo_path, branch_name)
-        
-        expected = [("commit1", "parent1"), ("commit2", "parent1"), ("commit2", "parent2")]
-        self.assertEqual(result, expected)
+    @classmethod
+    def setUpClass(cls):
+        # Подготовка тестового окружения
+        cls.test_repo_path = "./test_repo"  # Укажите путь к тестовому репозиторию
+        cls.test_branch_name = "master"    # Укажите название ветки в тестовом репозитории
+        cls.output_path = "./test_output"
 
-    @patch("subprocess.run")
-    def test_get_commit_dependencies_error(self, mock_run):
-        # Мокируем ошибку при выполнении git
-        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
-        
-        # Проверяем, что функция возвращает пустой список при ошибке
-        repo_path = "/fake/repo"
-        branch_name = "main"
-        result = hw2_git.get_commit_dependencies(repo_path, branch_name)
-        self.assertEqual(result, [])
+        # Убедимся, что тестовый репозиторий существуе
+        if not os.path.exists(cls.test_repo_path):
+            raise FileNotFoundError(f"Тестовый репозиторий не найден: {cls.test_repo_path}")
+
+    def test_read_git_object_loose(self):
+        # Тест чтения объекта, хранящегося в loose-формате
+        test_hash = "KNOWN_OBJECT_HASH"  # Замените на реальный хэш объекта
+        try:
+            result = read_git_object(self.test_repo_path, test_hash)
+            self.assertIn("tree", result)  # Проверяем наличие ожидаемых данных
+        except FileNotFoundError:
+            self.fail("Loose object could not be found")
+
+    def test_read_git_object_pack(self):
+        # Тест чтения объекта, хранящегося в pack-формате
+        test_hash = "PACKED_OBJECT_HASH"  # Замените на реальный хэш объекта
+        try:
+            result = read_git_object(self.test_repo_path, test_hash)
+            self.assertIn("tree", result)  # Проверяем наличие ожидаемых данных
+        except FileNotFoundError:
+            self.fail("Packed object could not be found")
+
+    def test_parse_commit_object(self):
+        # Тест разбора содержимого объекта коммита
+        commit_data = (
+            "tree TREE_HASH\n"
+            "parent PARENT_HASH\n"
+            "author Author Name <email@example.com> 1234567890 +0000\n"
+            "committer Committer Name <email@example.com> 1234567890 +0000\n\n"
+            "Commit message"
+        )
+        parents = parse_commit_object(commit_data)
+        self.assertEqual(parents, ["PARENT_HASH"])
+
+    def test_get_commit_dependencies(self):
+         # Тест извлечения зависимостей коммитов из ветки
+        try:
+            dependencies = get_commit_dependencies(self.test_repo_path, self.test_branch_name)
+            self.assertTrue(len(dependencies) > 0)
+            for dep in dependencies:
+                self.assertEqual(len(dep), 2)  # Каждая зависимость — кортеж (коммит, родитель)
+        except ValueError:
+            self.fail("Branch not found or no dependencies could be extracted")
 
     def test_build_graph(self):
-        # Проверяем создание графа (мокируем сам вывод Graphviz)
-        dependencies = [("commit1", "parent1"), ("commit2", "parent1")]
-        output_path = "test_output"
+        # Тест построения графа из зависимостей
+        dependencies = [("COMMIT_1", "COMMIT_2"), ("COMMIT_2", "COMMIT_3")]
+        output_file = os.path.join(self.output_path, "test_graph")
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
         
-        with patch.object(Digraph, "render", return_value=None) as mock_render:
-            hw2_git.build_graph(dependencies, output_path)
-            
-            # Проверяем, что метод render был вызван
-            mock_render.assert_called_once_with(output_path, cleanup=True)
+        build_graph(dependencies, output_file)
+        self.assertTrue(os.path.exists(output_file + ".png"))
 
-    @patch("subprocess.run")
-    def test_get_commit_dependencies_no_commits(self, mock_run):
-        # Мокируем случай, когда коммиты не найдены
-        mock_run.return_value = MagicMock(stdout="", stderr="", returncode=0)
-        
-        # Проверяем, что возвращается пустой список, если нет коммитов
-        repo_path = "/fake/repo"
-        branch_name = "main"
-        result = hw2_git.get_commit_dependencies(repo_path, branch_name)
-        self.assertEqual(result, [])
+    @classmethod
+    def tearDownClass(cls):
+        # Очистка тестовых файлов
+        if os.path.exists(cls.output_path):
+            for file in os.listdir(cls.output_path):
+                os.remove(os.path.join(cls.output_path, file))
+            os.rmdir(cls.output_path)
 
 if __name__ == "__main__":
     unittest.main()
